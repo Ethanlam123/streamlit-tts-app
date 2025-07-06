@@ -1,0 +1,6 @@
+streamlit
+pyttsx3
+openai
+python-dotenv
+# Optional for offline fallback:
+# TTS
