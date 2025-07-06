@@ -31,20 +31,10 @@ except ImportError:
 # Dependency checks
 missing = []
 try:
-    import pyttsx3
-except ImportError:
-    pyttsx3 = None
-    missing.append('pyttsx3')
-try:
     import openai
 except ImportError:
     openai = None
     missing.append('openai')
-try:
-    from TTS.api import TTS as CoquiTTS
-except ImportError:
-    CoquiTTS = None
-    # TTS is optional, only warn if pyttsx3 is also missing
 
 # --- Logging Setup ---
 LOG_FILE = 'tts_app.log'
@@ -96,62 +86,6 @@ def load_file(uploaded_file) -> List[str]:
         return []
 
 
-def choose_tts_engine(mode: str, voice: Optional[str] = None, rate: Optional[float] = None):
-    if mode == 'Offline (pyttsx3)':
-        if not pyttsx3:
-            pip_hint('pyttsx3')
-            return None
-        engine = pyttsx3.init()
-        if rate:
-            try:
-                engine.setProperty('rate', int(rate))
-            except Exception as e:
-                logger.warning(f"Failed to set rate: {e}")
-        if voice:
-            try:
-                voices = engine.getProperty('voices')
-                for v in voices:
-                    if voice.lower() in v.name.lower():
-                        engine.setProperty('voice', v.id)
-                        break
-            except Exception as e:
-                logger.warning(f"Failed to set voice: {e}")
-        return engine
-    elif mode == 'Offline (Coqui-TTS)':
-        if not CoquiTTS:
-            pip_hint('TTS')
-            return None
-        # Use a default English model
-        try:
-            tts = CoquiTTS("tts_models/en/ljspeech/tacotron2-DDC")
-            return tts
-        except Exception as e:
-            logger.error(f"Coqui-TTS load error: {e}")
-            st.error(f"Failed to load Coqui-TTS: {e}")
-            return None
-    elif mode == 'OpenAI API':
-        if not openai:
-            pip_hint('openai')
-            return None
-        return 'openai'  # Placeholder
-    else:
-        st.error("Unknown TTS mode selected.")
-        return None
-
-
-@st.cache_resource(show_spinner=False)
-def get_offline_engine(mode, voice, rate):
-    return choose_tts_engine(mode, voice, rate)
-
-
-@st.cache_data(show_spinner=False)
-def cache_audio_path(line: str, mode: str, voice: str, rate: float, output_dir: str) -> str:
-    # Used for cache key only
-    h = hash_line(f"{mode}|{voice}|{rate}|{line}")
-    ensure_dir(output_dir)
-    return str(Path(output_dir) / f"{get_timestamp()}_{h}.mp3")
-
-
 def synthesize_line(line: str, mode: str, voice: str, rate: float, output_dir: str, openai_api_key: Optional[str] = None, force_regen: bool = False) -> Tuple[Optional[str], str]:
     """
     Returns (audio_path, status)
@@ -164,22 +98,7 @@ def synthesize_line(line: str, mode: str, voice: str, rate: float, output_dir: s
         logger.info(f"Cache hit for line: {line}")
         return audio_path, 'cached'
     try:
-        if mode == 'Offline (pyttsx3)':
-            engine = pyttsx3.init()
-            if rate:
-                engine.setProperty('rate', int(rate))
-            if voice:
-                voices = engine.getProperty('voices')
-                for v in voices:
-                    if voice.lower() in v.name.lower():
-                        engine.setProperty('voice', v.id)
-                        break
-            engine.save_to_file(line, audio_path)
-            engine.runAndWait()
-        elif mode == 'Offline (Coqui-TTS)':
-            tts = CoquiTTS("tts_models/en/ljspeech/tacotron2-DDC")
-            tts.tts_to_file(text=line, file_path=audio_path)
-        elif mode == 'OpenAI API':
+        if mode == 'OpenAI API':
             if not openai_api_key:
                 return None, 'error'
             openai.api_key = openai_api_key
@@ -201,21 +120,8 @@ def synthesize_line(line: str, mode: str, voice: str, rate: float, output_dir: s
 
 
 def get_available_voices(mode: str) -> List[str]:
-    if mode == 'Offline (pyttsx3)':
-        if not pyttsx3:
-            return []
-        try:
-            engine = pyttsx3.init()
-            return [v.name for v in engine.getProperty('voices')]
-        except Exception:
-            return []
-    elif mode == 'Offline (Coqui-TTS)':
-        # Coqui-TTS: only one voice for default model
-        return ['default']
-    elif mode == 'OpenAI API':
-        # As of 2024, OpenAI supports 'alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'
-        return ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']
-    return []
+    # As of 2024, OpenAI supports 'alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'
+    return ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']
 
 
 def get_default_voice(mode: str) -> str:
@@ -224,12 +130,6 @@ def get_default_voice(mode: str) -> str:
 
 
 def get_default_rate(mode: str) -> float:
-    if mode == 'Offline (pyttsx3)':
-        return 200
-    elif mode == 'Offline (Coqui-TTS)':
-        return 1.0
-    elif mode == 'OpenAI API':
-        return 1.0
     return 1.0
 
 
@@ -249,15 +149,8 @@ st.title("🔊 Text-to-Speech App")
 # --- Sidebar ---
 st.sidebar.header("Settings")
 
-# TTS Back-End selection
-tts_modes = []
-if pyttsx3:
-    tts_modes.append('Offline (pyttsx3)')
-if CoquiTTS:
-    tts_modes.append('Offline (Coqui-TTS)')
-tts_modes.append('OpenAI API')
-
-mode = st.sidebar.selectbox("TTS Back-End", tts_modes)
+# Only OpenAI API mode
+mode = 'OpenAI API'
 
 # Voice selection
 voices = get_available_voices(mode)
@@ -268,10 +161,10 @@ voice = st.sidebar.selectbox(
 # Speaking rate
 rate = st.sidebar.slider(
     "Speaking Rate",
-    min_value=50 if mode == 'Offline (pyttsx3)' else 0.5,
-    max_value=300 if mode == 'Offline (pyttsx3)' else 2.0,
+    min_value=0.5,
+    max_value=2.0,
     value=get_default_rate(mode),
-    step=1 if mode == 'Offline (pyttsx3)' else 0.05
+    step=0.05
 )
 
 # Output folder
@@ -291,9 +184,9 @@ if uploaded_file:
         st.error("No lines found in file.")
 
 # --- OpenAI API Key Check ---
-openai_key_required = (mode == 'OpenAI API')
-openai_key = get_openai_key() if openai_key_required else None
-if openai_key_required and not openai_key:
+openai_key_required = True
+openai_key = get_openai_key()
+if not openai_key:
     st.error("OPENAI_API_KEY not set in environment. Please add it to your .env or environment variables.")
     st.stop()
 
@@ -418,8 +311,6 @@ if lines:
               disabled=st.session_state['batch_running'])
 
 # --- Error Handling for Missing Packages ---
-if 'pyttsx3' in missing:
-    pip_hint('pyttsx3')
 if 'openai' in missing:
     pip_hint('openai')
 
